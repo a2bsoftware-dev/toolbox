@@ -1,14 +1,37 @@
 import numpy as np
+import scipy.linalg as la
 import copy
+
 from engine.agents import PhysicalAgent
 from engine.controllers import LQRController, PIDController, PolePlacementController
 from engine.observers import KalmanFilter, LuenbergerObserver
 from engine.attacks import AttackSimulator
 from engine.defenses import SecureChannel, DifferentialPrivacy, AnomalyDetector, TrustFilter
+from engine.detection import IntrusionDetectionSystem
+from engine.metrics import PerformanceMetrics
+from utils.logger import EventLogger
+
+def c2d(A: np.ndarray, B: np.ndarray, dt: float) -> tuple:
+    """
+    Computes exact Zero-Order Hold (ZOH) discretization for a continuous state-space model:
+    x_dot = A*x + B*u  ==>  x[k+1] = A_d*x[k] + B_d*u[k]
+    Using matrix exponential block form.
+    """
+    n = A.shape[0]
+    m = B.shape[1]
+    M = np.zeros((n + m, n + m))
+    M[:n, :n] = A
+    M[:n, n:] = B
+    M_exp = la.expm(M * dt)
+    A_d = M_exp[:n, :n]
+    B_d = M_exp[:n, n:]
+    return A_d, B_d
 
 class NCSSimulator:
     """
     Main stateful simulator coordinating agents, filters, controllers, threats, and defenses.
+    Now supports continuous-time models, exact ZOH discretization, Intrusion Detection,
+    Performance Metrics, and Event Logging.
     """
     def __init__(self, config: dict):
         self.config = copy.deepcopy(config)
@@ -22,31 +45,53 @@ class NCSSimulator:
         self.t_max = sys_cfg["t_max"]
         self.max_accel = sys_cfg.get("max_accel", 10.0)
         self.max_speed = sys_cfg.get("max_speed", 15.0)
+        self.model_domain = sys_cfg.get("model_domain", "continuous").lower()
         
-        # System Matrices
-        self.A_d = np.array([
-            [1.0,  self.dt,  0.0,  0.0],
-            [0.0,  1.0 - self.damping*self.dt, 0.0, 0.0],
-            [0.0,  0.0,  1.0,  self.dt],
-            [0.0,  0.0,  0.0,  1.0 - self.damping*self.dt]
+        # 2. Define Continuous-Time System Model
+        self.A_cont = np.array([
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, -self.damping, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, -self.damping]
         ])
-        self.B_d = np.array([
+        self.B_cont = np.array([
             [0.0, 0.0],
-            [self.dt,  0.0],
+            [1.0,  0.0],
             [0.0, 0.0],
-            [0.0, self.dt ]
+            [0.0, 1.0 ]
         ])
-        self.C_d = np.array([
+        self.C_cont = np.array([
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0]
         ])
         
-        # 2. Noises
+        # 3. Discretize for simulation step
+        if self.model_domain == "discrete":
+            # Interpret configuration values directly as discrete-time
+            self.A_d = np.array([
+                [1.0,  self.dt,  0.0,  0.0],
+                [0.0,  1.0 - self.damping*self.dt, 0.0, 0.0],
+                [0.0,  0.0,  1.0,  self.dt],
+                [0.0,  0.0,  0.0,  1.0 - self.damping*self.dt]
+            ])
+            self.B_d = np.array([
+                [0.0, 0.0],
+                [self.dt,  0.0],
+                [0.0, 0.0],
+                [0.0, self.dt]
+            ])
+        else:
+            # Discretize continuous-time model using ZOH matrix exponentiation
+            self.A_d, self.B_d = c2d(self.A_cont, self.B_cont, self.dt)
+            
+        self.C_d = np.copy(self.C_cont)
+        
+        # 4. Noise Parameters
         noise_cfg = self.config["noises"]
         self.Q_process = np.diag(noise_cfg["process_noise_diag"])
         self.R_measure = np.diag(noise_cfg["measure_noise_diag"])
         
-        # 3. Controller & Observer Options
+        # 5. Controller & Observer Options
         lqr_cfg = self.config["lqr"]
         self.Q_lqr = np.diag(lqr_cfg["Q_lqr_diag"])
         self.R_lqr = np.diag(lqr_cfg["R_lqr_diag"])
@@ -54,31 +99,35 @@ class NCSSimulator:
         self.controller_type = self.config["controller"].get("type", "LQR").upper()
         self.observer_type = self.config["observer"].get("type", "KALMAN").upper()
         
-        # 4. Agent Configurations
+        # 6. Agent Configurations
         sim_cfg = self.config["simulation"]
         self.n_followers = sim_cfg["n_followers"]
         self.initial_positions = sim_cfg["initial_positions"]
         self.omega = sim_cfg["leader_orbit_omega"]
         self.radius = sim_cfg["leader_orbit_radius"]
         
-        # 5. Security & Defense Shields
+        # 7. Security & Defense Shields
         sec_cfg = self.config["security"]
         self.secret_key = sec_cfg.get("default_secret_key", "super_secure_consensus_key")
         self.dp_epsilon = sec_cfg.get("dp_epsilon", 1.5)
         self.dp_sensitivity = sec_cfg.get("dp_sensitivity", 0.15)
         self.anomaly_threshold = sec_cfg.get("anomaly_threshold", 5.0)
         
-        # Enable switches
         self.shield_hmac = sec_cfg.get("enable_hmac", True)
         self.shield_dp = sec_cfg.get("enable_dp", True)
         self.shield_anomaly = sec_cfg.get("enable_anomaly", True)
         self.shield_trust = sec_cfg.get("enable_trust", True)
         
-        # Instantiate Components
+        # Instantiate Security Components
         self.secure_channel = SecureChannel(secret_key=self.secret_key)
         self.dp_shield = DifferentialPrivacy(epsilon=self.dp_epsilon, sensitivity=self.dp_sensitivity)
         self.anomaly_detector = AnomalyDetector(threshold=self.anomaly_threshold)
         self.trust_filter = TrustFilter(n_followers=self.n_followers)
+        
+        # Instantiate Intrusion Detection (IDS) & Event Logger
+        self.ids = IntrusionDetectionSystem(fdi_threshold=self.anomaly_threshold)
+        self.event_logger = EventLogger()
+        self.event_logger.log_event(0.0, "Simulator Initialized successfully.")
         
         # Initialize Controller
         if self.controller_type == "PID":
@@ -88,8 +137,12 @@ class NCSSimulator:
             poles = self.config["controller"].get("desired_poles", [0.91, 0.91, 0.85, 0.85])
             self.controller = PolePlacementController(self.A_d, self.B_d, poles)
         else:
-            self.controller = LQRController(self.A_d, self.B_d, self.Q_lqr, self.R_lqr)
-            
+            # LQR Controller supports CARE or DARE based on domain selection
+            if self.model_domain == "continuous":
+                self.controller = LQRController(self.A_cont, self.B_cont, self.Q_lqr, self.R_lqr, domain="continuous")
+            else:
+                self.controller = LQRController(self.A_d, self.B_d, self.Q_lqr, self.R_lqr, domain="discrete")
+                
         self.P_lyap = self.controller.P_lyap if hasattr(self.controller, 'P_lyap') and self.controller.P_lyap is not None else np.eye(4)
         
         # Initialize Followers
@@ -113,7 +166,7 @@ class NCSSimulator:
         # Cloud Database
         self.cloud_db = {}
         
-        # Threat Models Setup
+        # Threat Configurations Setup
         attack_cfg = self.config.get("attacks", {})
         self.fdi_cfg = attack_cfg.get("fdi", {"start_time": 12.0, "end_time": 22.0, "offset": [15.0, 0.0, -15.0, 0.0]})
         self.dos_cfg = attack_cfg.get("dos", {"start_time": 28.0, "end_time": 38.0})
@@ -131,6 +184,10 @@ class NCSSimulator:
             replay_window_size=self.replay_cfg.get("window_size", 40),
             delay_steps=self.delay_cfg.get("steps", 5)
         )
+        
+        # Track previous states of attacks to log state transitions
+        self._prev_fdi_active = False
+        self._prev_dos_active = False
         
         # Leader State Initialization
         self.x_L_state = np.array([self.radius, 0.0, 0.0, self.radius * self.omega], dtype=float).reshape(4, 1)
@@ -170,6 +227,20 @@ class NCSSimulator:
         dos_active = self.attack_dos_active_switch and (self.dos_cfg["start_time"] <= self.t <= self.dos_cfg["end_time"])
         delay_active = self.attack_delay_active_switch and (self.delay_cfg["start_time"] <= self.t <= self.delay_cfg["end_time"])
         replay_active = self.attack_replay_active_switch and (self.replay_cfg["start_time"] <= self.t <= self.replay_cfg["end_time"])
+        
+        # Event Logging transitions
+        if fdi_active and not self._prev_fdi_active:
+            self.event_logger.log_event(self.t, "FDI Attack START (Uplink/Downlink bias).")
+        elif not fdi_active and self._prev_fdi_active:
+            self.event_logger.log_event(self.t, "FDI Attack END. Re-establishing link verification.")
+            
+        if dos_active and not self._prev_dos_active:
+            self.event_logger.log_event(self.t, "DoS Attack START (Link severed).")
+        elif not dos_active and self._prev_dos_active:
+            self.event_logger.log_event(self.t, "DoS Attack END. Restoring cloud connection.")
+            
+        self._prev_fdi_active = fdi_active
+        self._prev_dos_active = dos_active
         
         # Determine status string for canvas colors
         if dos_active:
@@ -216,7 +287,6 @@ class NCSSimulator:
             
             # Form packet
             if self.shield_hmac:
-                # Differential Privacy
                 x_to_upload = self.dp_shield.obfuscate_state(x_est) if self.shield_dp else np.copy(x_est)
                 follower_packet = self.secure_channel.generate_packet(i+1, x_to_upload, self.t)
             else:
@@ -238,9 +308,6 @@ class NCSSimulator:
                     if self.secure_channel.verify_packet(follower_packet):
                         self.cloud_db[i+1] = follower_packet
                         self.packets_sent += 1
-                    else:
-                        # Uplink validation failed
-                        pass
             else:
                 if follower_packet is not None:
                     self.cloud_db[i+1] = follower_packet
@@ -273,22 +340,31 @@ class NCSSimulator:
             else:
                 # Defense validation
                 if self.shield_hmac:
-                    is_valid = self.secure_channel.verify_packet(leader_packet_down)
-                    if is_valid:
+                    is_valid = self.secure_channel.generate_packet(0, np.array(leader_packet_down["payload"]["state"]), self.t) if "payload" in leader_packet_down else False
+                    is_sig_ok = self.secure_channel.verify_packet(leader_packet_down)
+                    
+                    if is_sig_ok:
                         leader_state_used = np.array(leader_packet_down["payload"]["state"])
                         
-                        # Anomaly residual detection
+                        # Anomaly residual detection (IDS)
+                        predicted = (self.A_d @ self.x_L_pred[i].reshape(4, 1) + self.B_d @ u_L).flatten()
+                        
+                        # Let the IDS calculate FDI and Replay probabilities
+                        fdi_prob = self.ids.detect_fdi(leader_state_used, predicted)
+                        replay_prob = self.ids.detect_replay(0, leader_state_used)
+                        
+                        # Flag anomaly if probability exceeds 50%
+                        is_anomalous = (fdi_prob > 0.5 or replay_prob > 0.5)
+                        
                         if self.shield_anomaly:
-                            predicted = (self.A_d @ self.x_L_pred[i].reshape(4, 1) + self.B_d @ u_L).flatten()
-                            is_anomaly = self.anomaly_detector.check_anomaly(leader_state_used, predicted)
-                            
                             if self.shield_trust:
-                                self.trust_filter.update_trust(0, is_anomaly)
+                                self.trust_filter.update_trust(0, is_anomalous)
                                 
-                            if is_anomaly or (self.shield_trust and not self.trust_filter.is_trusted(0)):
+                            if is_anomalous or (self.shield_trust and not self.trust_filter.is_trusted(0)):
                                 # Reject tampered packet, use dead reckoning
                                 self.x_L_pred[i] = predicted
                                 leader_state_used = np.copy(self.x_L_pred[i])
+                                self.event_logger.log_event(self.t, f"IDS Alert: Anomalous telemetry rejected (prob: {max(fdi_prob, replay_prob)*100:.1f}%).")
                             else:
                                 self.x_L_pred[i] = np.copy(leader_state_used)
                         else:

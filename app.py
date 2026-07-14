@@ -81,14 +81,29 @@ DEFAULT_CONFIG = {
     }
 }
 
+import copy
+
+def merge_configs(default: dict, user: dict) -> dict:
+    """
+    Recursively merges user configuration values into the default configuration template.
+    """
+    merged = copy.deepcopy(default)
+    for k, v in user.items():
+        if isinstance(v, dict) and k in merged and isinstance(merged[k], dict):
+            merged[k] = merge_configs(merged[k], v)
+        else:
+            merged[k] = copy.deepcopy(v)
+    return merged
+
 def load_config(config_path: str = "config.json") -> dict:
     if not os.path.exists(config_path):
-        return DEFAULT_CONFIG
+        return copy.deepcopy(DEFAULT_CONFIG)
     try:
         with open(config_path, "r") as f:
-            return json.load(f)
+            user_config = json.load(f)
+        return merge_configs(DEFAULT_CONFIG, user_config)
     except Exception:
-        return DEFAULT_CONFIG
+        return copy.deepcopy(DEFAULT_CONFIG)
 
 def main():
     logging.basicConfig(level=logging.INFO)

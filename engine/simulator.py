@@ -122,7 +122,7 @@ class NCSSimulator:
         self.secure_channel = SecureChannel(secret_key=self.secret_key)
         self.dp_shield = DifferentialPrivacy(epsilon=self.dp_epsilon, sensitivity=self.dp_sensitivity)
         self.anomaly_detector = AnomalyDetector(threshold=self.anomaly_threshold)
-        self.trust_filter = TrustFilter(n_followers=self.n_followers)
+        self.trust_filter = TrustFilter(n_agents=self.n_followers)
         
         # Instantiate Intrusion Detection (IDS) & Event Logger
         self.ids = IntrusionDetectionSystem(fdi_threshold=self.anomaly_threshold)

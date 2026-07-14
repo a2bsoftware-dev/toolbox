@@ -1,6 +1,5 @@
 import numpy as np
 import scipy.linalg
-import scipy.signal
 
 class LQRController:
     """
@@ -99,13 +98,18 @@ class PolePlacementController:
         
     def compute_gain(self):
         try:
+            import scipy.signal
             # Desired poles must be complex conjugates or real
             poles = np.array(self.desired_poles, dtype=complex)
             res = scipy.signal.place_poles(self.A_d, self.B_d, poles)
             self.K_fb = res.gain_matrix
         except Exception as e:
-            # Fallback to LQR or zeros
-            self.K_fb = np.zeros((2, 4))
+            # Fallback to discrete-time LQR steady-state feedback gain (stable design proxy)
+            try:
+                P_are = scipy.linalg.solve_discrete_are(self.A_d, self.B_d, np.eye(self.A_d.shape[0]), np.eye(self.B_d.shape[1]))
+                self.K_fb = np.linalg.inv(np.eye(self.B_d.shape[1]) + self.B_d.T @ P_are @ self.B_d) @ (self.B_d.T @ P_are @ self.A_d)
+            except Exception:
+                self.K_fb = np.zeros((2, 4))
             
     def compute_control(self, x_target: np.ndarray, x_current: np.ndarray, u_feedforward: np.ndarray) -> np.ndarray:
         error = x_current.reshape(4, 1) - x_target.reshape(4, 1)

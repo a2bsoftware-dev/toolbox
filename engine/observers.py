@@ -1,5 +1,5 @@
 import numpy as np
-import scipy.signal
+import scipy.linalg
 
 class KalmanFilter:
     """
@@ -66,14 +66,21 @@ class LuenbergerObserver:
         Place poles of A_d^T - C_d^T * L_T
         """
         try:
+            import scipy.signal
             poles = np.array(self.desired_poles, dtype=complex)
             res = scipy.signal.place_poles(self.A_d.T, self.C_d.T, poles)
             self.L = res.gain_matrix.T
         except Exception as e:
-            # Fallback to simple default gain matrix
-            self.L = np.zeros((4, 2))
-            self.L[0, 0] = 0.5
-            self.L[2, 1] = 0.5
+            # Fallback to design steady-state Kalman gain (CARE/DARE equivalent as stable fallback)
+            try:
+                Q = np.eye(self.A_d.shape[0])
+                R = np.eye(self.C_d.shape[0])
+                P = scipy.linalg.solve_discrete_are(self.A_d.T, self.C_d.T, Q, R)
+                self.L = self.A_d @ P @ self.C_d.T @ np.linalg.inv(self.C_d @ P @ self.C_d.T + R)
+            except Exception:
+                self.L = np.zeros((4, 2))
+                self.L[0, 0] = 0.5
+                self.L[2, 1] = 0.5
             
     def predict(self, u: np.ndarray):
         # Propagation is handled together with correction in the update step for ZOH Luenberger,

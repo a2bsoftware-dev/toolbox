@@ -18,7 +18,7 @@ class Sidebar(ctk.CTkFrame):
         self.on_pdf = on_pdf_callback
         self.on_csv = on_csv_callback
         
-        self.configure(fg_color="#0f172a", border_width=1, border_color="rgba(255,255,255,0.05)")
+        self.configure(fg_color="#0f172a", border_width=1, border_color="#1e293b")
         self.setup_widgets()
         
     def setup_widgets(self):

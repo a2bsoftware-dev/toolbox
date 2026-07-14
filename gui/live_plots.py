@@ -26,7 +26,7 @@ class LivePlotsPanel(ctk.CTkFrame):
         # Matplotlib styling for Dark Theme
         plt.style.use('dark_background')
         self.plt_color_bg = "#0a0e17"
-        self.plt_color_grid = "rgba(255, 255, 255, 0.05)"
+        self.plt_color_grid = (1.0, 1.0, 1.0, 0.05)
         
         # Init plots dictionary
         self.canvases = {}

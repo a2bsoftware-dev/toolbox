@@ -64,7 +64,7 @@ class MainWindow(ctk.CTk):
         self.dashboard.pack(side="top", fill="x", pady=2)
         
         # Embed Live Matplotlib Charts Panel (Phase 3)
-        self.charts_panel = LivePlotsPanel(self.right_frame, border_width=1, border_color="rgba(255,255,255,0.05)")
+        self.charts_panel = LivePlotsPanel(self.right_frame, border_width=1, border_color="#1e293b")
         self.charts_panel.pack(side="bottom", fill="both", expand=True, pady=2)
         
     def load_configuration(self, config: dict):

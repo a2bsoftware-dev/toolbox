@@ -46,7 +46,7 @@ class MatrixEditor(ctk.CTkFrame):
                 val = matrix[r, c] if len(matrix.shape) > 1 else (matrix[r] if r == c else 0.0)
                 
                 entry = ctk.CTkEntry(self.grid_frame, width=50, height=22, font=("Helvetica", 9),
-                                     fg_color="#1e293b", border_color="rgba(255,255,255,0.1)",
+                                     fg_color="#1e293b", border_color="#334155",
                                      text_color="#ffffff", justify="center")
                 entry.grid(row=r, column=c, padx=2, pady=2)
                 entry.insert(0, f"{float(val):.4f}")

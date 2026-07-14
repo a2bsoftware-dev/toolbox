@@ -16,7 +16,7 @@ class Dashboard(ctk.CTkFrame):
         self.top_section.pack(side="top", fill="x", pady=2)
         
         # Topology Frame (Phase 6)
-        self.anim_container = ctk.CTkFrame(self.top_section, height=270, fg_color="#0a0e17", border_width=1, border_color="rgba(255,255,255,0.05)")
+        self.anim_container = ctk.CTkFrame(self.top_section, height=270, fg_color="#0a0e17", border_width=1, border_color="#1e293b")
         self.anim_container.pack(side="left", fill="both", expand=True, padx=2)
         
         from gui.network_animator import NetworkAnimator
@@ -24,7 +24,7 @@ class Dashboard(ctk.CTkFrame):
         self.net_animator.pack(fill="both", expand=True, padx=5, pady=5)
         
         # Cloud Database Monitor Frame (Phase 7)
-        self.cloud_container = ctk.CTkFrame(self.top_section, width=320, height=270, fg_color="#0f172a", border_width=1, border_color="rgba(255,255,255,0.05)")
+        self.cloud_container = ctk.CTkFrame(self.top_section, width=320, height=270, fg_color="#0f172a", border_width=1, border_color="#1e293b")
         self.cloud_container.pack(side="right", fill="both", padx=2)
         
         ctk.CTkLabel(self.cloud_container, text="☁️ Cloud Database Monitor", 
@@ -34,7 +34,7 @@ class Dashboard(ctk.CTkFrame):
         self.setup_cloud_labels()
         
         # 2. Playback Scrubber Frame
-        self.playback_bar = ctk.CTkFrame(self, fg_color="#0f172a", border_width=1, border_color="rgba(255,255,255,0.05)")
+        self.playback_bar = ctk.CTkFrame(self, fg_color="#0f172a", border_width=1, border_color="#1e293b")
         self.playback_bar.pack(side="top", fill="x", pady=2)
         
         # Scrubber time indicators

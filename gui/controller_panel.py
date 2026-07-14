@@ -87,7 +87,7 @@ class ControllerPanel(ctk.CTkFrame):
         # 5. Designer Output Box
         ctk.CTkLabel(self, text="📊 Stability Verification", font=title_font, text_color="#06b6d4").pack(anchor="w", pady=(10, 2))
         
-        self.out_box = ctk.CTkFrame(self, fg_color="#0f172a", border_width=1, border_color="rgba(255,255,255,0.05)")
+        self.out_box = ctk.CTkFrame(self, fg_color="#0f172a", border_width=1, border_color="#1e293b")
         self.out_box.pack(fill="both", expand=True, pady=2, padx=2)
         
         self.lbl_stable = ctk.CTkLabel(self.out_box, text="Stable: -", font=lbl_font, text_color="#94a3b8")

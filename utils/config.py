@@ -1,16 +1,19 @@
 import os
 import json
 import logging
-from gui.main_window import MainWindow
+import copy
 
-# Default fallback configuration dict
+logger = logging.getLogger("NCS.Config")
+
+# Default template configuration dictionary
 DEFAULT_CONFIG = {
     "system": {
         "damping": 0.1,
         "dt": 0.05,
         "t_max": 45.0,
         "max_accel": 10.0,
-        "max_speed": 15.0
+        "max_speed": 15.0,
+        "model_domain": "continuous"
     },
     "noises": {
         "process_noise_diag": [0.0005, 0.005, 0.0005, 0.005],
@@ -81,12 +84,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-import copy
-
 def merge_configs(default: dict, user: dict) -> dict:
-    """
-    Recursively merges user configuration values into the default configuration template.
-    """
     merged = copy.deepcopy(default)
     for k, v in user.items():
         if isinstance(v, dict) and k in merged and isinstance(merged[k], dict):
@@ -97,23 +95,27 @@ def merge_configs(default: dict, user: dict) -> dict:
 
 def load_config(config_path: str = "config.json") -> dict:
     if not os.path.exists(config_path):
+        logger.warning(f"Configuration file '{config_path}' not found. Using template default configuration.")
         return copy.deepcopy(DEFAULT_CONFIG)
     try:
-        with open(config_path, "r") as f:
+        with open(config_path, 'r') as f:
             user_config = json.load(f)
+        logger.info(f"Successfully loaded configuration from '{config_path}'")
         return merge_configs(DEFAULT_CONFIG, user_config)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error parsing configuration file '{config_path}': {e}. Using baseline fallback config.")
         return copy.deepcopy(DEFAULT_CONFIG)
 
-def main():
-    logging.basicConfig(level=logging.INFO)
-    
-    # Load configuration parameters
-    config = load_config()
-    
-    # Launch main CustomTkinter window
-    app = MainWindow(config)
-    app.mainloop()
-
-if __name__ == "__main__":
-    main()
+def load_env(env_path: str = ".env"):
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    key, val = line.split('=', 1)
+                    os.environ[key.strip()] = val.strip()
+            logger.info(f"Loaded environment variables from '{env_path}'")
+        except Exception as e:
+            logger.error(f"Error loading environment file '{env_path}': {e}")

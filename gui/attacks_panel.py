@@ -1,5 +1,6 @@
 import customtkinter as ctk
 import tkinter as tk
+from tkinter import messagebox
 
 class AttacksPanel(ctk.CTkScrollableFrame):
     """
@@ -171,28 +172,28 @@ class AttacksPanel(ctk.CTkScrollableFrame):
                 raise ValueError("FDI offset must contain exactly 4 values.")
                 
             # Update config dict
-            self.config["attacks"]["enable_fdi"] = self.fdi_var.get()
+            self.config["attacks"]["enable_fdi"] = bool(self.fdi_cb.get())
             self.config["attacks"]["fdi"]["start_time"] = float(self.fdi_start.get())
             self.config["attacks"]["fdi"]["end_time"] = float(self.fdi_end.get())
             self.config["attacks"]["fdi"]["offset"] = offset
             
-            self.config["attacks"]["enable_dos"] = self.dos_var.get()
+            self.config["attacks"]["enable_dos"] = bool(self.dos_cb.get())
             self.config["attacks"]["dos"]["start_time"] = float(self.dos_start.get())
             self.config["attacks"]["dos"]["end_time"] = float(self.dos_end.get())
             
-            self.config["attacks"]["enable_delay"] = self.delay_var.get()
+            self.config["attacks"]["enable_delay"] = bool(self.delay_cb.get())
             self.config["attacks"]["delay"]["start_time"] = float(self.delay_start.get())
             self.config["attacks"]["delay"]["end_time"] = float(self.delay_end.get())
             
-            self.config["attacks"]["enable_replay"] = self.replay_var.get()
+            self.config["attacks"]["enable_replay"] = bool(self.replay_cb.get())
             self.config["attacks"]["replay"]["start_time"] = float(self.replay_start.get())
             self.config["attacks"]["replay"]["end_time"] = float(self.replay_end.get())
             
-            self.config["security"]["enable_hmac"] = self.hmac_var.get()
-            self.config["security"]["enable_dp"] = self.dp_var.get()
+            self.config["security"]["enable_hmac"] = bool(self.hmac_cb.get())
+            self.config["security"]["enable_dp"] = bool(self.dp_cb.get())
             self.config["security"]["dp_epsilon"] = float(self.dp_epsilon.get())
-            self.config["security"]["enable_anomaly"] = self.anomaly_var.get()
-            self.config["security"]["enable_trust"] = self.trust_var.get()
+            self.config["security"]["enable_anomaly"] = bool(self.anomaly_cb.get())
+            self.config["security"]["enable_trust"] = bool(self.trust_cb.get())
             
             # Fire update notification callback
             self.on_update(self.config)

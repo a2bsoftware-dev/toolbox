@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 import copy
 
@@ -11,6 +12,8 @@ from engine.detection import IntrusionDetectionSystem
 from engine.metrics import PerformanceMetrics
 from engine.model import continuous_matrices, euler_discrete_matrices, zoh_discretize
 from utils.logger import EventLogger
+
+logger = logging.getLogger("NCS.Simulator")
 
 class NCSSimulator:
     """
@@ -69,22 +72,33 @@ class NCSSimulator:
         sec_cfg = self.config["security"]
         env_var_name = sec_cfg.get("secret_key_env_var", "NCS_SECRET_KEY")
         self.secret_key = os.environ.get(env_var_name) or sec_cfg.get("default_secret_key", "super_secure_consensus_key")
+        if not os.environ.get(env_var_name):
+            logger.warning(
+                f"'{env_var_name}' is not set; using the default_secret_key from config.json "
+                "(this value is checked into version control - set the env var for real deployments)."
+            )
         self.dp_epsilon = sec_cfg.get("dp_epsilon", 1.5)
         self.dp_sensitivity = sec_cfg.get("dp_sensitivity", 0.15)
         self.anomaly_threshold = sec_cfg.get("anomaly_threshold", 5.0)
-        
+        # These were previously hardcoded class defaults with no way to tune them from config;
+        # exposing them here does not change behavior (fallbacks match the prior hardcoded values).
+        self.replay_threshold = sec_cfg.get("replay_threshold", 0.5)
+        self.trust_decay_rate = sec_cfg.get("trust_decay_rate", 0.2)
+        self.trust_recovery_rate = sec_cfg.get("trust_recovery_rate", 0.05)
+        self.trust_cutoff = sec_cfg.get("trust_cutoff", 0.5)
+
         self.shield_hmac = sec_cfg.get("enable_hmac", True)
         self.shield_dp = sec_cfg.get("enable_dp", True)
         self.shield_anomaly = sec_cfg.get("enable_anomaly", True)
         self.shield_trust = sec_cfg.get("enable_trust", True)
-        
+
         # Instantiate Security Components
         self.secure_channel = SecureChannel(secret_key=self.secret_key)
         self.dp_shield = DifferentialPrivacy(epsilon=self.dp_epsilon, sensitivity=self.dp_sensitivity)
-        self.trust_filter = TrustFilter(n_agents=self.n_followers)
-        
+        self.trust_filter = TrustFilter(n_agents=self.n_followers, decay_rate=self.trust_decay_rate, recovery_rate=self.trust_recovery_rate)
+
         # Instantiate Intrusion Detection (IDS) & Event Logger
-        self.ids = IntrusionDetectionSystem(fdi_threshold=self.anomaly_threshold)
+        self.ids = IntrusionDetectionSystem(fdi_threshold=self.anomaly_threshold, replay_threshold=self.replay_threshold)
         self.event_logger = EventLogger()
         self.event_logger.log_event(0.0, "Simulator Initialized successfully.")
         
@@ -318,7 +332,7 @@ class NCSSimulator:
                             if self.shield_trust:
                                 self.trust_filter.update_trust(0, is_anomalous)
                                 
-                            if is_anomalous or (self.shield_trust and not self.trust_filter.is_trusted(0)):
+                            if is_anomalous or (self.shield_trust and not self.trust_filter.is_trusted(0, cutoff=self.trust_cutoff)):
                                 # Reject tampered packet, use dead reckoning
                                 self.x_L_pred[i] = predicted
                                 leader_state_used = np.copy(self.x_L_pred[i])

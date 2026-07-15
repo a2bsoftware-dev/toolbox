@@ -1,31 +1,16 @@
+import os
 import numpy as np
-import scipy.linalg as la
 import copy
 
 from engine.agents import PhysicalAgent
 from engine.controllers import LQRController, PIDController, PolePlacementController
 from engine.observers import KalmanFilter, LuenbergerObserver
 from engine.attacks import AttackSimulator
-from engine.defenses import SecureChannel, DifferentialPrivacy, AnomalyDetector, TrustFilter
+from engine.defenses import SecureChannel, DifferentialPrivacy, TrustFilter
 from engine.detection import IntrusionDetectionSystem
 from engine.metrics import PerformanceMetrics
+from engine.model import continuous_matrices, euler_discrete_matrices, zoh_discretize
 from utils.logger import EventLogger
-
-def c2d(A: np.ndarray, B: np.ndarray, dt: float) -> tuple:
-    """
-    Computes exact Zero-Order Hold (ZOH) discretization for a continuous state-space model:
-    x_dot = A*x + B*u  ==>  x[k+1] = A_d*x[k] + B_d*u[k]
-    Using matrix exponential block form.
-    """
-    n = A.shape[0]
-    m = B.shape[1]
-    M = np.zeros((n + m, n + m))
-    M[:n, :n] = A
-    M[:n, n:] = B
-    M_exp = la.expm(M * dt)
-    A_d = M_exp[:n, :n]
-    B_d = M_exp[:n, n:]
-    return A_d, B_d
 
 class NCSSimulator:
     """
@@ -48,42 +33,16 @@ class NCSSimulator:
         self.model_domain = sys_cfg.get("model_domain", "continuous").lower()
         
         # 2. Define Continuous-Time System Model
-        self.A_cont = np.array([
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, -self.damping, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0, -self.damping]
-        ])
-        self.B_cont = np.array([
-            [0.0, 0.0],
-            [1.0,  0.0],
-            [0.0, 0.0],
-            [0.0, 1.0 ]
-        ])
-        self.C_cont = np.array([
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0]
-        ])
-        
+        self.A_cont, self.B_cont, self.C_cont = continuous_matrices(self.damping)
+
         # 3. Discretize for simulation step
         if self.model_domain == "discrete":
             # Interpret configuration values directly as discrete-time
-            self.A_d = np.array([
-                [1.0,  self.dt,  0.0,  0.0],
-                [0.0,  1.0 - self.damping*self.dt, 0.0, 0.0],
-                [0.0,  0.0,  1.0,  self.dt],
-                [0.0,  0.0,  0.0,  1.0 - self.damping*self.dt]
-            ])
-            self.B_d = np.array([
-                [0.0, 0.0],
-                [self.dt,  0.0],
-                [0.0, 0.0],
-                [0.0, self.dt]
-            ])
+            self.A_d, self.B_d = euler_discrete_matrices(self.damping, self.dt)
         else:
             # Discretize continuous-time model using ZOH matrix exponentiation
-            self.A_d, self.B_d = c2d(self.A_cont, self.B_cont, self.dt)
-            
+            self.A_d, self.B_d = zoh_discretize(self.A_cont, self.B_cont, self.dt)
+
         self.C_d = np.copy(self.C_cont)
         
         # 4. Noise Parameters
@@ -108,7 +67,8 @@ class NCSSimulator:
         
         # 7. Security & Defense Shields
         sec_cfg = self.config["security"]
-        self.secret_key = sec_cfg.get("default_secret_key", "super_secure_consensus_key")
+        env_var_name = sec_cfg.get("secret_key_env_var", "NCS_SECRET_KEY")
+        self.secret_key = os.environ.get(env_var_name) or sec_cfg.get("default_secret_key", "super_secure_consensus_key")
         self.dp_epsilon = sec_cfg.get("dp_epsilon", 1.5)
         self.dp_sensitivity = sec_cfg.get("dp_sensitivity", 0.15)
         self.anomaly_threshold = sec_cfg.get("anomaly_threshold", 5.0)
@@ -121,7 +81,6 @@ class NCSSimulator:
         # Instantiate Security Components
         self.secure_channel = SecureChannel(secret_key=self.secret_key)
         self.dp_shield = DifferentialPrivacy(epsilon=self.dp_epsilon, sensitivity=self.dp_sensitivity)
-        self.anomaly_detector = AnomalyDetector(threshold=self.anomaly_threshold)
         self.trust_filter = TrustFilter(n_agents=self.n_followers)
         
         # Instantiate Intrusion Detection (IDS) & Event Logger
@@ -340,9 +299,8 @@ class NCSSimulator:
             else:
                 # Defense validation
                 if self.shield_hmac:
-                    is_valid = self.secure_channel.generate_packet(0, np.array(leader_packet_down["payload"]["state"]), self.t) if "payload" in leader_packet_down else False
                     is_sig_ok = self.secure_channel.verify_packet(leader_packet_down)
-                    
+
                     if is_sig_ok:
                         leader_state_used = np.array(leader_packet_down["payload"]["state"])
                         

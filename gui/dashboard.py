@@ -95,20 +95,23 @@ class Dashboard(ctk.CTkFrame):
         # Packet counters
         self.cloud_widgets["lbl_sent"].configure(text=str(simulator.packets_sent))
         self.cloud_widgets["lbl_lost"].configure(text=str(simulator.packets_lost))
-        
-        # Active state & latency
+
+        # Active state & latency (latency is derived from the simulator's actual tick rate,
+        # and the buffered delay-attack window, rather than a fixed display value)
+        dt_ms = simulator.dt * 1000.0
         if status == "dos":
             self.cloud_widgets["lbl_latency"].configure(text="inf (Severed)", text_color="#ef4444")
             self.cloud_widgets["lbl_state"].configure(text="DoS ACTIVE", text_color="#ef4444")
         elif status == "attacked":
-            self.cloud_widgets["lbl_latency"].configure(text="50 ms", text_color="#ffffff")
+            self.cloud_widgets["lbl_latency"].configure(text=f"{dt_ms:.0f} ms", text_color="#ffffff")
             self.cloud_widgets["lbl_state"].configure(text="FDI ACTIVE", text_color="#f59e0b")
         elif status == "secured":
-            self.cloud_widgets["lbl_latency"].configure(text="50 ms", text_color="#ffffff")
+            self.cloud_widgets["lbl_latency"].configure(text=f"{dt_ms:.0f} ms", text_color="#ffffff")
             self.cloud_widgets["lbl_state"].configure(text="SHIELDED [OK]", text_color="#06b6d4")
         elif status in ["delayed", "replayed"]:
-            self.cloud_widgets["lbl_latency"].configure(text="Delayed", text_color="#8b5cf6")
+            delay_ms = simulator.delay_cfg.get("steps", 5) * dt_ms
+            self.cloud_widgets["lbl_latency"].configure(text=f"{delay_ms:.0f} ms (buffered)", text_color="#8b5cf6")
             self.cloud_widgets["lbl_state"].configure(text=status.upper(), text_color="#8b5cf6")
         else:
-            self.cloud_widgets["lbl_latency"].configure(text="50 ms", text_color="#ffffff")
+            self.cloud_widgets["lbl_latency"].configure(text=f"{dt_ms:.0f} ms", text_color="#ffffff")
             self.cloud_widgets["lbl_state"].configure(text="NORMAL", text_color="#10b981")

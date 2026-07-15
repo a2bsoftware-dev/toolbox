@@ -1,5 +1,8 @@
+import logging
 import numpy as np
 import scipy.linalg
+
+logger = logging.getLogger("NCS.Controllers")
 
 class LQRController:
     """
@@ -34,6 +37,7 @@ class LQRController:
                 A_cl = self.A - self.B @ self.K_fb
                 self.P_lyap = scipy.linalg.solve_discrete_lyapunov(A_cl.T, np.eye(self.A.shape[0]))
         except Exception as e:
+            logger.warning(f"LQR gain synthesis failed ({e}); falling back to zero-gain (uncontrolled) design.")
             n = self.A.shape[0]
             m = self.B.shape[1]
             self.K_fb = np.zeros((m, n))
@@ -104,11 +108,13 @@ class PolePlacementController:
             res = scipy.signal.place_poles(self.A_d, self.B_d, poles)
             self.K_fb = res.gain_matrix
         except Exception as e:
+            logger.warning(f"Pole placement failed ({e}); falling back to discrete LQR steady-state gain.")
             # Fallback to discrete-time LQR steady-state feedback gain (stable design proxy)
             try:
                 P_are = scipy.linalg.solve_discrete_are(self.A_d, self.B_d, np.eye(self.A_d.shape[0]), np.eye(self.B_d.shape[1]))
                 self.K_fb = np.linalg.inv(np.eye(self.B_d.shape[1]) + self.B_d.T @ P_are @ self.B_d) @ (self.B_d.T @ P_are @ self.A_d)
-            except Exception:
+            except Exception as e2:
+                logger.warning(f"LQR fallback also failed ({e2}); falling back to zero-gain (uncontrolled) design.")
                 self.K_fb = np.zeros((2, 4))
             
     def compute_control(self, x_target: np.ndarray, x_current: np.ndarray, u_feedforward: np.ndarray) -> np.ndarray:

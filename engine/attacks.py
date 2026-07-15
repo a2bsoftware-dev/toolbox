@@ -20,12 +20,6 @@ class AttackSimulator:
         self.replay_cache = {}
         self.replay_active_index = {}
         
-    def apply_dos(self) -> bool:
-        """
-        Denial of Service (DoS): cuts connection. Returns True if dropped.
-        """
-        return True
-        
     def apply_fdi(self, packet: dict, is_defended: bool) -> dict:
         """
         False Data Injection (FDI): injects bias offset in transit.

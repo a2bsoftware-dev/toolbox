@@ -4,9 +4,10 @@ import logging
 
 def run_gui():
     from gui.main_window import MainWindow
-    from utils.config import load_config
-    
+    from utils.config import load_config, load_env
+
     logging.basicConfig(level=logging.INFO)
+    load_env()
     config = load_config()
     app = MainWindow(config)
     app.mainloop()
@@ -23,6 +24,9 @@ def run_basic_test():
     from Controller.controller import Controller
     from Tester.testerAttack import testAttackSimulation
     from Shield.shield import SecureChannel, DifferentialPrivacy
+    from utils.config import load_env
+
+    load_env()
 
     A = [[0, 1],
          [0, 0]]

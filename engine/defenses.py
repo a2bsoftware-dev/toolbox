@@ -50,26 +50,6 @@ class DifferentialPrivacy:
         return state + noise
 
 
-class AnomalyDetector:
-    """
-    Monitors state residual deviations to flag False Data Injection attacks.
-    """
-    def __init__(self, threshold: float = 5.0):
-        self.threshold = threshold
-        self.is_alarm_active = False
-        
-    def check_anomaly(self, x_received: np.ndarray, x_predicted: np.ndarray) -> bool:
-        """
-        Returns True if an anomaly (tampered state) is detected.
-        """
-        residual = np.linalg.norm(x_received.flatten() - x_predicted.flatten())
-        if residual > self.threshold:
-            self.is_alarm_active = True
-            return True # Anomaly detected
-        self.is_alarm_active = False
-        return False
-
-
 class TrustFilter:
     """
     Maintains a trust score [0.0, 1.0] for each network node based on message consistency.

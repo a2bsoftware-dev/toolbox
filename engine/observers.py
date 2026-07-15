@@ -1,5 +1,8 @@
+import logging
 import numpy as np
 import scipy.linalg
+
+logger = logging.getLogger("NCS.Observers")
 
 class KalmanFilter:
     """
@@ -71,13 +74,15 @@ class LuenbergerObserver:
             res = scipy.signal.place_poles(self.A_d.T, self.C_d.T, poles)
             self.L = res.gain_matrix.T
         except Exception as e:
+            logger.warning(f"Observer pole placement failed ({e}); falling back to steady-state Kalman gain.")
             # Fallback to design steady-state Kalman gain (CARE/DARE equivalent as stable fallback)
             try:
                 Q = np.eye(self.A_d.shape[0])
                 R = np.eye(self.C_d.shape[0])
                 P = scipy.linalg.solve_discrete_are(self.A_d.T, self.C_d.T, Q, R)
                 self.L = self.A_d @ P @ self.C_d.T @ np.linalg.inv(self.C_d @ P @ self.C_d.T + R)
-            except Exception:
+            except Exception as e2:
+                logger.warning(f"Kalman fallback also failed ({e2}); falling back to a fixed conservative gain.")
                 self.L = np.zeros((4, 2))
                 self.L[0, 0] = 0.5
                 self.L[2, 1] = 0.5

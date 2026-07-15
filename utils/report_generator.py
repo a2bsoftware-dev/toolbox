@@ -6,6 +6,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
+from engine.metrics import PerformanceMetrics
+
 class ReportGenerator:
     """
     Automates compiling and exporting simulation metrics to PDF reports and Excel/CSV worksheets.
@@ -30,18 +32,12 @@ class ReportGenerator:
         if len(time_grid) > 0:
             post_attack_indices = [idx for idx, t in enumerate(time_grid) if t > 22.0]
             if post_attack_indices:
-                settled_t = None
-                for idx in reversed(post_attack_indices):
-                    if track_errs[idx] > 1.5:
-                        settled_t = time_grid[idx]
-                        break
-                if settled_t is not None:
-                    # Settling time is distance from end of attack (22.0) to convergence
-                    settling_val = settled_t - 22.0
-                    settling_time = f"{settling_val:.2f} s" if settling_val > 0 else "Instant"
-                else:
-                    settling_time = "Instant"
-                    
+                settling_val = PerformanceMetrics.compute_settling_time(
+                    time_grid, list(track_errs), attack_end_time=22.0, threshold=1.5
+                )
+                settling_time = f"{settling_val:.2f} s" if settling_val > 0 else "Instant"
+
+
         return {
             "rmse": rmse,
             "mae": mae,
@@ -103,8 +99,8 @@ class ReportGenerator:
         }
         
         for i in range(n_followers):
-            data[f"F{i+1}_X"] = [h[k][0] for k in range(len(time)) for h in [history["followers"][i]]]
-            data[f"F{i+1}_Y"] = [h[k][2] for k in range(len(time)) for h in [history["followers"][i]]]
+            data[f"F{i+1}_X"] = [state[0] for state in history["followers"][i]]
+            data[f"F{i+1}_Y"] = [state[2] for state in history["followers"][i]]
             data[f"F{i+1}_TrackErr"] = history["tracking_errors"][i]
             data[f"F{i+1}_Lyap"] = history["lyapunov_values"][i]
             data[f"F{i+1}_CtrlNorm"] = history["control_inputs"][i]

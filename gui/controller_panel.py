@@ -3,6 +3,7 @@ import numpy as np
 from tkinter import messagebox
 from gui.matrix_editor import MatrixEditor
 from engine.controllers import LQRController, PolePlacementController
+from engine.model import continuous_matrices, euler_discrete_matrices
 
 class ControllerPanel(ctk.CTkFrame):
     """
@@ -162,38 +163,13 @@ class ControllerPanel(ctk.CTkFrame):
         damping = self.config["system"]["damping"]
         
         # We fetch continuous or discrete matrix configurations based on domain selection
-        if val == "A":
+        if val in ("A", "B"):
             if dom == "continuous":
-                arr = np.array([
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, -damping, 0.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                    [0.0, 0.0, 0.0, -damping]
-                ])
+                A, B, _ = continuous_matrices(damping)
             else:
                 dt = self.config["system"]["dt"]
-                arr = np.array([
-                    [1.0,  dt,  0.0,  0.0],
-                    [0.0,  1.0 - damping*dt, 0.0, 0.0],
-                    [0.0,  0.0,  1.0,  dt],
-                    [0.0,  0.0,  0.0,  1.0 - damping*dt]
-                ])
-        elif val == "B":
-            if dom == "continuous":
-                arr = np.array([
-                    [0.0, 0.0],
-                    [1.0,  0.0],
-                    [0.0, 0.0],
-                    [0.0, 1.0 ]
-                ])
-            else:
-                dt = self.config["system"]["dt"]
-                arr = np.array([
-                    [0.0, 0.0],
-                    [dt,  0.0],
-                    [0.0, 0.0],
-                    [0.0, dt]
-                ])
+                A, B = euler_discrete_matrices(damping, dt)
+            arr = A if val == "A" else B
         elif val == "Q_lqr":
             arr = np.diag(self.config["lqr"]["Q_lqr_diag"])
         else:
@@ -248,33 +224,11 @@ class ControllerPanel(ctk.CTkFrame):
             damping = self.config["system"]["damping"]
             
             if dom == "continuous":
-                A = np.array([
-                    [0.0, 1.0, 0.0, 0.0],
-                    [0.0, -damping, 0.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                    [0.0, 0.0, 0.0, -damping]
-                ])
-                B = np.array([
-                    [0.0, 0.0],
-                    [1.0,  0.0],
-                    [0.0, 0.0],
-                    [0.0, 1.0 ]
-                ])
+                A, B, _ = continuous_matrices(damping)
             else:
                 dt = self.config["system"]["dt"]
-                A = np.array([
-                    [1.0,  dt,  0.0,  0.0],
-                    [0.0,  1.0 - damping*dt, 0.0, 0.0],
-                    [0.0,  0.0,  1.0,  dt],
-                    [0.0,  0.0,  0.0,  1.0 - damping*dt]
-                ])
-                B = np.array([
-                    [0.0, 0.0],
-                    [dt,  0.0],
-                    [0.0, 0.0],
-                    [0.0, dt]
-                ])
-                
+                A, B = euler_discrete_matrices(damping, dt)
+
             Q = np.diag(self.config["lqr"]["Q_lqr_diag"])
             R = np.diag(self.config["lqr"]["R_lqr_diag"])
             

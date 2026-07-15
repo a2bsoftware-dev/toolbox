@@ -38,9 +38,14 @@ class Sidebar(ctk.CTkFrame):
         self.nav_tabs.pack(fill="x", padx=10, pady=5)
         self.nav_tabs.set("Model")
         
-        # Inner content frame (where config panels will be packed)
+        # Inner content frame (where config panels will be packed).
+        # pack_propagate(False) pins this frame to the height pack() actually allocates it
+        # (rather than growing to fit the Security tab's taller content), so the nested
+        # AttacksPanel CTkScrollableFrame is forced to clip/scroll instead of overflowing
+        # past the sidebar's bottom edge, hiding the Anomaly/Trust controls below it.
         self.content_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.content_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        self.content_frame.pack_propagate(False)
         
         # Playback Controls Frame
         playback_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -71,7 +76,8 @@ class Sidebar(ctk.CTkFrame):
         # File row 2
         row2 = ctk.CTkFrame(proj_frame, fg_color="transparent")
         row2.pack(fill="x", pady=2)
-        ctk.CTkButton(row2, text="Export PDF", height=24, fg_color="#059669", hover_color="#047857", text_color="#ffffff", command=self.on_pdf).pack(side="left", fill="x", expand=True, padx=2)
+        self.pdf_btn = ctk.CTkButton(row2, text="Export PDF", height=24, fg_color="#059669", hover_color="#047857", text_color="#ffffff", command=self.on_pdf)
+        self.pdf_btn.pack(side="left", fill="x", expand=True, padx=2)
         ctk.CTkButton(row2, text="Export CSV", height=24, fg_color="#059669", hover_color="#047857", text_color="#ffffff", command=self.on_csv).pack(side="left", fill="x", expand=True, padx=2)
         
     def set_playing_state(self, is_playing: bool):

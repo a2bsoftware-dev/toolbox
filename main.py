@@ -112,10 +112,16 @@ if __name__ == "__main__":
                         help="Select 'gui' for the main application, 'cli' for full simulation, or 'test' for the basic drone tracking test.")
     
     args, unknown = parser.parse_known_args()
-    
-    if args.mode == "gui":
-        run_gui()
-    elif args.mode == "cli":
-        run_cli(unknown)
-    elif args.mode == "test":
-        run_basic_test()
+
+    try:
+        if args.mode == "gui":
+            run_gui()
+        elif args.mode == "cli":
+            run_cli(unknown)
+        elif args.mode == "test":
+            run_basic_test()
+    except KeyboardInterrupt:
+        # Ctrl+C while blocked in Tk's mainloop (or the CLI/test loops) is a normal way to
+        # stop this app, not a crash - exit quietly instead of dumping a traceback.
+        print("\nStopped.")
+        sys.exit(0)

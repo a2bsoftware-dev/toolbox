@@ -10,9 +10,20 @@ class LivePlotsPanel(ctk.CTkFrame):
     Houses multiple real-time plotting canvases inside CTkTabview tabs.
     Updates only the active tab for peak rendering performance.
     """
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, on_export_pdf_callback=None, **kwargs):
         super().__init__(parent, **kwargs)
-        
+
+        # Export button lives at the bottom of the graphs panel - packed with side="bottom"
+        # *before* the tabview below so it reserves its own space first; the tabview (packed
+        # with fill+expand afterward) then fills whatever area remains above it.
+        if on_export_pdf_callback is not None:
+            self.export_btn = ctk.CTkButton(
+                self, text="\U0001F4C4 Export Full PDF Report", height=32,
+                fg_color="#059669", hover_color="#047857", text_color="#ffffff",
+                font=ctk.CTkFont(weight="bold"), command=on_export_pdf_callback
+            )
+            self.export_btn.pack(side="bottom", fill="x", padx=5, pady=(2, 5))
+
         # Create Tab View
         self.tabview = ctk.CTkTabview(self, segmented_button_selected_color="#06b6d4",
                                       segmented_button_selected_hover_color="#0891b2",
@@ -124,10 +135,16 @@ class LivePlotsPanel(ctk.CTkFrame):
         time = history["time"]
         
         attack_cfg = config.get("attacks", {})
-        fdi_start = attack_cfg.get("fdi", {}).get("start_time", 12.0)
-        fdi_end = attack_cfg.get("fdi", {}).get("end_time", 22.0)
-        dos_start = attack_cfg.get("dos", {}).get("start_time", 28.0)
-        dos_end = attack_cfg.get("dos", {}).get("end_time", 38.0)
+        attack_windows = []
+        for key, label, span_color, text_color in [
+            ("fdi", "FDI Active", "yellow", "darkgoldenrod"),
+            ("dos", "DoS Active", "gray", "dimgray"),
+            ("delay", "Delay Active", "#8b5cf6", "#8b5cf6"),
+            ("replay", "Replay Active", "#ec4899", "#ec4899"),
+        ]:
+            sub_cfg = attack_cfg.get(key, {})
+            if attack_cfg.get(f"enable_{key}", False):
+                attack_windows.append((label, sub_cfg.get("start_time", 0.0), sub_cfg.get("end_time", 0.0), span_color, text_color))
         
         if active_tab == "Trajectories":
             # Plot leader reference orbit
@@ -154,7 +171,7 @@ class LivePlotsPanel(ctk.CTkFrame):
             # Plot consensus error for each agent
             for i in range(n_followers):
                 ax.plot(time, history["tracking_errors"][i], color=colors[i % len(colors)], label=f"F{i+1}")
-            self.shade_attack_windows(ax, fdi_start, fdi_end, dos_start, dos_end)
+            self.shade_attack_windows(ax, attack_windows)
             ax.set_title("Consensus Tracking Error", fontsize=10, weight="bold")
             ax.set_xlabel("Time (s)", fontsize=8)
             ax.set_ylabel("Error (m)", fontsize=8)
@@ -164,7 +181,7 @@ class LivePlotsPanel(ctk.CTkFrame):
             # Plot control commands
             for i in range(n_followers):
                 ax.plot(time, history["control_inputs"][i], color=colors[i % len(colors)], label=f"F{i+1}")
-            self.shade_attack_windows(ax, fdi_start, fdi_end, dos_start, dos_end)
+            self.shade_attack_windows(ax, attack_windows)
             ax.set_title("Control Input Command Magnitude ||u(t)||", fontsize=10, weight="bold")
             ax.set_xlabel("Time (s)", fontsize=8)
             ax.set_ylabel("Acceleration (m/s^2)", fontsize=8)
@@ -174,7 +191,7 @@ class LivePlotsPanel(ctk.CTkFrame):
             # Plot KF estimation errors
             for i in range(n_followers):
                 ax.plot(time, history["estimation_errors"][i], color=colors[i % len(colors)], label=f"F{i+1}")
-            self.shade_attack_windows(ax, fdi_start, fdi_end, dos_start, dos_end)
+            self.shade_attack_windows(ax, attack_windows)
             ax.set_title("Kalman Filter Estimation Error", fontsize=10, weight="bold")
             ax.set_xlabel("Time (s)", fontsize=8)
             ax.set_ylabel("Error Norm", fontsize=8)
@@ -184,16 +201,24 @@ class LivePlotsPanel(ctk.CTkFrame):
             # Plot Lyapunov energy decay
             for i in range(n_followers):
                 ax.plot(time, history["lyapunov_values"][i], color=colors[i % len(colors)], label=f"F{i+1}")
-            self.shade_attack_windows(ax, fdi_start, fdi_end, dos_start, dos_end)
+            self.shade_attack_windows(ax, attack_windows)
             ax.set_title("System Lyapunov Stability Decay V(t)", fontsize=10, weight="bold")
             ax.set_xlabel("Time (s)", fontsize=8)
             ax.set_ylabel("Energy Value", fontsize=8)
             ax.grid(True, color="gray", alpha=0.1)
             
         elif active_tab == "Pole s-Plane" and eigenvalues is not None:
-            # Map discrete poles to continuous complex s-plane
-            dt = config["system"]["dt"]
-            s_poles = np.log(eigenvalues) / dt
+            # Eigenvalues from a continuous-domain controller are already s-plane values;
+            # only discrete-domain eigenvalues need mapping via s = ln(lambda)/dt. Applying
+            # the log/dt mapping unconditionally (as before) pushed continuous-domain poles
+            # to huge coordinates (e.g. real part ~15 for a typical LQR design here) that fall
+            # completely outside the fixed axis limits below, making the chart look empty.
+            domain = config["system"].get("model_domain", "continuous").lower()
+            if domain == "continuous":
+                s_poles = np.array(eigenvalues, dtype=complex)
+            else:
+                dt = config["system"]["dt"]
+                s_poles = np.log(np.array(eigenvalues, dtype=complex)) / dt
             
             # Draw axes
             ax.axvline(0, color='white', linewidth=1.5, label='Stability Boundary')
@@ -217,14 +242,14 @@ class LivePlotsPanel(ctk.CTkFrame):
         fig.tight_layout()
         canvas.draw()
         
-    def shade_attack_windows(self, ax, fdi_start, fdi_end, dos_start, dos_end):
+    def shade_attack_windows(self, ax, attack_windows):
         """
-        Shades active FDI and DoS intervals on the time axes.
+        Shades every currently-enabled attack's active time interval on the axes.
+        Stacks the text labels at different heights so overlapping windows stay readable.
         """
-        ax.axvspan(fdi_start, fdi_end, color='yellow', alpha=0.1)
-        ax.axvspan(dos_start, dos_end, color='gray', alpha=0.1)
-        # Text label indicators using axis transforms
-        ax.text((fdi_start + fdi_end)/2.0, 0.85, "FDI Active", color='darkgoldenrod',
-                alpha=0.85, ha='center', weight='bold', fontsize=8, transform=ax.get_xaxis_transform())
-        ax.text((dos_start + dos_end)/2.0, 0.85, "DoS Active", color='dimgray',
-                alpha=0.85, ha='center', weight='bold', fontsize=8, transform=ax.get_xaxis_transform())
+        label_heights = [0.85, 0.72, 0.59, 0.46]
+        for idx, (label, start, end, span_color, text_color) in enumerate(attack_windows):
+            ax.axvspan(start, end, color=span_color, alpha=0.1)
+            height = label_heights[idx % len(label_heights)]
+            ax.text((start + end) / 2.0, height, label, color=text_color,
+                    alpha=0.9, ha='center', weight='bold', fontsize=8, transform=ax.get_xaxis_transform())

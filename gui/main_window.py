@@ -8,6 +8,7 @@ from gui.live_plots import LivePlotsPanel
 from engine.simulator import NCSSimulator
 from utils.project_manager import ProjectManager
 from utils.report_generator import ReportGenerator
+from utils.config import normalize_simulation_duration
 
 class MainWindow(ctk.CTk):
     """
@@ -64,13 +65,18 @@ class MainWindow(ctk.CTk):
         self.dashboard.pack(side="top", fill="x", pady=2)
         
         # Embed Live Matplotlib Charts Panel (Phase 3)
-        self.charts_panel = LivePlotsPanel(self.right_frame, border_width=1, border_color="#1e293b")
+        self.charts_panel = LivePlotsPanel(self.right_frame, on_export_pdf_callback=self.export_pdf_report,
+                                            border_width=1, border_color="#1e293b")
         self.charts_panel.pack(side="bottom", fill="both", expand=True, pady=2)
         
     def load_configuration(self, config: dict):
+        # Extend t_max (if needed) so the run reaches every enabled attack's window before
+        # stopping - otherwise the scrubber/step-limit below would be computed from a t_max
+        # too short to ever reach a later-starting attack (e.g. Delay/Replay at 50-70s).
+        normalize_simulation_duration(config)
         self.config = config
         self.simulator = NCSSimulator(self.config)
-        
+
         # Reset Scrubber parameters
         steps_limit = int(self.config["system"]["t_max"] / self.config["system"]["dt"])
         self.dashboard.scrubber.configure(to=steps_limit)
@@ -91,7 +97,22 @@ class MainWindow(ctk.CTk):
         # Draw initial plots
         is_stable, eigvals, radius = self.simulator.controller.verify_stability()
         self.charts_panel.update_active_plot(self.simulator.history, self.config, eigvals)
-        
+
+        # Fresh simulator has no history yet - nothing to export until a run completes or pauses
+        self.set_export_enabled(False)
+
+    def set_export_enabled(self, enabled: bool):
+        """
+        The PDF report reflects a specific run's data, so exporting mid-play would capture a
+        moving target; the button is disabled while playing and only re-enabled once the run
+        is paused, completes on its own, or is reset.
+        """
+        state = "normal" if enabled else "disabled"
+        if hasattr(self.sidebar, 'pdf_btn'):
+            self.sidebar.pdf_btn.configure(state=state)
+        if hasattr(self.charts_panel, 'export_btn'):
+            self.charts_panel.export_btn.configure(state=state)
+
     def toggle_play(self):
         if self.is_playing:
             self.is_playing = False
@@ -99,9 +120,11 @@ class MainWindow(ctk.CTk):
             if self.play_loop_id:
                 self.after_cancel(self.play_loop_id)
                 self.play_loop_id = None
+            self.set_export_enabled(True)
         else:
             self.is_playing = True
             self.sidebar.set_playing_state(True)
+            self.set_export_enabled(False)
             self.simulation_loop()
             
     def simulation_loop(self):
@@ -150,7 +173,10 @@ class MainWindow(ctk.CTk):
         # Redraw reset plots
         is_stable, eigvals, radius = self.simulator.controller.verify_stability()
         self.charts_panel.update_active_plot(self.simulator.history, self.config, eigvals)
-        
+
+        # The reset simulator has no history yet - nothing to export until it runs again
+        self.set_export_enabled(False)
+
     def update_playback_labels(self):
         t_max = self.config["system"]["t_max"]
         self.dashboard.max_time_lbl.configure(text=f"{t_max:.1f}s")
@@ -197,7 +223,7 @@ class MainWindow(ctk.CTk):
         path = filedialog.asksaveasfilename(filetypes=[("PDF Document", "*.pdf")], defaultextension=".pdf")
         if not path:
             return
-        ReportGenerator.generate_pdf_report(path, self.config, self.simulator.history)
+        ReportGenerator.generate_pdf_report(path, self.config, self.simulator.history, self.simulator.controller)
         messagebox.showinfo("Report Exported", f"Thesis PDF analysis generated successfully at:\n{path}")
         
     def export_csv_data(self):

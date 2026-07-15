@@ -97,18 +97,39 @@ def merge_configs(default: dict, user: dict) -> dict:
             merged[k] = copy.deepcopy(v)
     return merged
 
+def normalize_simulation_duration(config: dict) -> dict:
+    """
+    Extends t_max so the simulation always runs 10s past the latest end_time among
+    attacks the user actually has enabled. Without this, an attack window configured
+    later than t_max (e.g. the default Delay/Replay windows at 50-70s) would never
+    actually fire, since the simulation would already have stopped. Only ever grows
+    t_max - never shrinks a duration the user configured to be longer.
+    """
+    attacks = config.get("attacks", {})
+    end_times = []
+    for key in ("fdi", "dos", "delay", "replay"):
+        if attacks.get(f"enable_{key}", False):
+            end_time = attacks.get(key, {}).get("end_time")
+            if end_time is not None:
+                end_times.append(end_time)
+    if end_times:
+        required = max(end_times) + 10.0
+        if config["system"]["t_max"] < required:
+            config["system"]["t_max"] = required
+    return config
+
 def load_config(config_path: str = "config.json") -> dict:
     if not os.path.exists(config_path):
         logger.warning(f"Configuration file '{config_path}' not found. Using template default configuration.")
-        return copy.deepcopy(DEFAULT_CONFIG)
+        return normalize_simulation_duration(copy.deepcopy(DEFAULT_CONFIG))
     try:
         with open(config_path, 'r') as f:
             user_config = json.load(f)
         logger.info(f"Successfully loaded configuration from '{config_path}'")
-        return merge_configs(DEFAULT_CONFIG, user_config)
+        return normalize_simulation_duration(merge_configs(DEFAULT_CONFIG, user_config))
     except Exception as e:
         logger.error(f"Error parsing configuration file '{config_path}': {e}. Using baseline fallback config.")
-        return copy.deepcopy(DEFAULT_CONFIG)
+        return normalize_simulation_duration(copy.deepcopy(DEFAULT_CONFIG))
 
 def load_env(env_path: str = ".env"):
     if os.path.exists(env_path):

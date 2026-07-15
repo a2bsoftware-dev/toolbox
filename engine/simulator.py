@@ -12,6 +12,7 @@ from engine.detection import IntrusionDetectionSystem
 from engine.metrics import PerformanceMetrics
 from engine.model import continuous_matrices, euler_discrete_matrices, zoh_discretize
 from utils.logger import EventLogger
+from utils.config import normalize_simulation_duration
 
 logger = logging.getLogger("NCS.Simulator")
 
@@ -24,9 +25,13 @@ class NCSSimulator:
     def __init__(self, config: dict):
         self.config = copy.deepcopy(config)
         self.reset()
-        
+
     def reset(self):
         # 1. System Parameters
+        # Safety net: ensure t_max is long enough to reach every enabled attack's window,
+        # even if this simulator was constructed directly (bypassing utils.config.load_config
+        # and the GUI's own normalization on config changes).
+        normalize_simulation_duration(self.config)
         sys_cfg = self.config["system"]
         self.dt = sys_cfg["dt"]
         self.damping = sys_cfg["damping"]
@@ -164,7 +169,11 @@ class NCSSimulator:
         
         # Leader State Initialization
         self.x_L_state = np.array([self.radius, 0.0, 0.0, self.radius * self.omega], dtype=float).reshape(4, 1)
-        self.x_L_pred = [self.x_L_state.flatten() for _ in range(self.n_followers)]
+        # Accumulated position-error integral for get_leader_input()'s orbit-holding correction
+        self.x_L_integral_error = np.zeros(2)
+        # Single shared dead-reckoning estimate of the leader: the downlink broadcast is one
+        # cloud->followers event per timestep, not one per follower (see step()).
+        self.x_L_pred = self.x_L_state.flatten()
         self.u_prev = [np.zeros((2, 1)) for _ in range(self.n_followers)]
         
         # Simulation Counters & Logs
@@ -186,9 +195,52 @@ class NCSSimulator:
             "network_link_status": []
         }
         
+    def get_leader_reference(self, t):
+        """
+        Exact ideal circular-orbit state at time t. Immune to drift by construction (it is a
+        closed-form function of t, not an accumulated propagation), so this is used as the
+        dead-reckoning fallback whenever a follower can't trust/receive the leader's telemetry:
+        it targets the known nominal trajectory instead of blindly propagating a (possibly
+        already-diverged, e.g. from a briefly-accepted replayed packet) ODE guess forward with
+        no restoring force of its own to ever resynchronize it.
+        """
+        return np.array([
+            self.radius * np.cos(self.omega * t),
+            -self.radius * self.omega * np.sin(self.omega * t),
+            self.radius * np.sin(self.omega * t),
+            self.radius * self.omega * np.cos(self.omega * t)
+        ])
+
     def get_leader_input(self, t):
-        ux = -self.radius * (self.omega**2) * np.cos(self.omega * t) - self.damping * self.x_L_state[1, 0]
-        uy = -self.radius * (self.omega**2) * np.sin(self.omega * t) - self.damping * self.x_L_state[3, 0]
+        """
+        Feedforward centripetal acceleration (+ drag cancellation) keeps the leader moving
+        at the right speed/heading for a circular orbit, but on its own it never corrects for
+        the actual position - any tiny numerical/discretization mismatch compounds, unbounded,
+        step after step, since there is no restoring force pulling the leader back toward its
+        nominal radius/phase. Over long runs (or once other logic elsewhere falls back to pure
+        dead-reckoning of this same trajectory) that unbounded drift was observed pushing the
+        "10m radius" orbit out past 15m, and - because that dead-reckoning fallback never
+        resynchronizes - permanently pegging the anomaly detector's residual above threshold
+        once any attack forced a single dead-reckoning step. A PID correction against the ideal
+        time-parametrized circular path (x_ref, y_ref) grounds the leader to its configured
+        orbit: P+D alone left a small steady-state radius offset against the residual ZOH
+        discretization bias, so an integral term is included to drive it out entirely.
+        """
+        x_ref = self.radius * np.cos(self.omega * t)
+        y_ref = self.radius * np.sin(self.omega * t)
+        vx_ref = -self.radius * self.omega * np.sin(self.omega * t)
+        vy_ref = self.radius * self.omega * np.cos(self.omega * t)
+
+        ex = x_ref - self.x_L_state[0, 0]
+        ey = y_ref - self.x_L_state[2, 0]
+        self.x_L_integral_error += np.array([ex, ey]) * self.dt
+
+        kp, kd, ki = 1.0, 2.0, 0.05  # gentle, well-damped hold on the configured orbit
+
+        ux = (-self.radius * (self.omega**2) * np.cos(self.omega * t) - self.damping * self.x_L_state[1, 0]
+              + kp * ex + kd * (vx_ref - self.x_L_state[1, 0]) + ki * self.x_L_integral_error[0])
+        uy = (-self.radius * (self.omega**2) * np.sin(self.omega * t) - self.damping * self.x_L_state[3, 0]
+              + kp * ey + kd * (vy_ref - self.x_L_state[3, 0]) + ki * self.x_L_integral_error[1])
         return np.array([ux, uy]).reshape(2, 1)
         
     def step(self) -> dict:
@@ -286,71 +338,75 @@ class NCSSimulator:
                     self.cloud_db[i+1] = follower_packet
                     self.packets_sent += 1
                     
-        # 2. Downlink routing, prediction, and control action execution
+        # 2. Downlink routing: the leader's cloud broadcast is ONE event per timestep shared by
+        # every follower, so it must be fetched/attacked/verified exactly once here. Applying it
+        # per-follower (as before) would replay/delay/detect-replay the same signal N times per
+        # tick, corrupting the delay buffer depth and replay cache and causing the anomaly
+        # detector's replay check to false-positive on the leader's own slow, legitimate motion.
+        leader_packet_down = self.cloud_db.get(0, None)
+
+        if fdi_active and leader_packet_down is not None:
+            leader_packet_down = self.attack_simulator.apply_fdi(leader_packet_down, self.shield_hmac)
+
+        if delay_active and leader_packet_down is not None:
+            leader_packet_down = self.attack_simulator.apply_delay(0, leader_packet_down)
+
+        if leader_packet_down is not None:
+            leader_packet_down = self.attack_simulator.apply_replay(0, leader_packet_down, replay_active)
+
+        # ZOH prediction fallback on DoS
+        if dos_active or leader_packet_down is None:
+            self.packets_lost += 1
+            # Dead reckoning prediction: fall back to the known ideal reference trajectory
+            self.x_L_pred = self.get_leader_reference(self.t)
+            leader_state_used = np.copy(self.x_L_pred)
+        else:
+            # Defense validation
+            if self.shield_hmac:
+                is_sig_ok = self.secure_channel.verify_packet(leader_packet_down)
+
+                if is_sig_ok:
+                    leader_state_used = np.array(leader_packet_down["payload"]["state"])
+
+                    # Anomaly residual detection (IDS): compare against the ideal reference,
+                    # not a dead-reckoned guess that could itself have drifted out of phase
+                    predicted = self.get_leader_reference(self.t)
+
+                    # Let the IDS calculate FDI and Replay probabilities
+                    fdi_prob = self.ids.detect_fdi(leader_state_used, predicted)
+                    replay_prob = self.ids.detect_replay(0, leader_state_used)
+
+                    # Flag anomaly if probability exceeds 50%
+                    is_anomalous = (fdi_prob > 0.5 or replay_prob > 0.5)
+
+                    if self.shield_anomaly:
+                        if self.shield_trust:
+                            self.trust_filter.update_trust(0, is_anomalous)
+
+                        if is_anomalous or (self.shield_trust and not self.trust_filter.is_trusted(0, cutoff=self.trust_cutoff)):
+                            # Reject tampered packet, use dead reckoning
+                            self.x_L_pred = predicted
+                            leader_state_used = np.copy(self.x_L_pred)
+                            self.event_logger.log_event(self.t, f"IDS Alert: Anomalous telemetry rejected (prob: {max(fdi_prob, replay_prob)*100:.1f}%).")
+                        else:
+                            self.x_L_pred = np.copy(leader_state_used)
+                    else:
+                        self.x_L_pred = np.copy(leader_state_used)
+                else:
+                    # Cryptographic signature failed (downlink FDI detected)
+                    # Reject packet, use dead reckoning
+                    self.x_L_pred = self.get_leader_reference(self.t)
+                    leader_state_used = np.copy(self.x_L_pred)
+            else:
+                # Unshielded: accept whatever is downloaded
+                leader_state_used = np.array(leader_packet_down["state"]) if "state" in leader_packet_down else np.zeros(4)
+                self.x_L_pred = np.copy(leader_state_used)
+
+        # 3. Prediction and control action execution for each follower using the shared leader estimate
         for i in range(self.n_followers):
             kf = self.filters[i]
             x_est = kf.get_state()
-            
-            # Download Leader Packet
-            leader_packet_down = self.cloud_db.get(0, None)
-            
-            # Downlink attacks
-            if fdi_active and leader_packet_down is not None:
-                leader_packet_down = self.attack_simulator.apply_fdi(leader_packet_down, self.shield_hmac)
-                
-            if delay_active and leader_packet_down is not None:
-                leader_packet_down = self.attack_simulator.apply_delay(0, leader_packet_down)
-                
-            if leader_packet_down is not None:
-                leader_packet_down = self.attack_simulator.apply_replay(0, leader_packet_down, replay_active)
-                
-            # ZOH prediction fallback on DoS
-            if dos_active or leader_packet_down is None:
-                self.packets_lost += 1
-                # Dead reckoning prediction
-                self.x_L_pred[i] = (self.A_d @ self.x_L_pred[i].reshape(4, 1) + self.B_d @ u_L).flatten()
-                leader_state_used = np.copy(self.x_L_pred[i])
-            else:
-                # Defense validation
-                if self.shield_hmac:
-                    is_sig_ok = self.secure_channel.verify_packet(leader_packet_down)
 
-                    if is_sig_ok:
-                        leader_state_used = np.array(leader_packet_down["payload"]["state"])
-                        
-                        # Anomaly residual detection (IDS)
-                        predicted = (self.A_d @ self.x_L_pred[i].reshape(4, 1) + self.B_d @ u_L).flatten()
-                        
-                        # Let the IDS calculate FDI and Replay probabilities
-                        fdi_prob = self.ids.detect_fdi(leader_state_used, predicted)
-                        replay_prob = self.ids.detect_replay(0, leader_state_used)
-                        
-                        # Flag anomaly if probability exceeds 50%
-                        is_anomalous = (fdi_prob > 0.5 or replay_prob > 0.5)
-                        
-                        if self.shield_anomaly:
-                            if self.shield_trust:
-                                self.trust_filter.update_trust(0, is_anomalous)
-                                
-                            if is_anomalous or (self.shield_trust and not self.trust_filter.is_trusted(0, cutoff=self.trust_cutoff)):
-                                # Reject tampered packet, use dead reckoning
-                                self.x_L_pred[i] = predicted
-                                leader_state_used = np.copy(self.x_L_pred[i])
-                                self.event_logger.log_event(self.t, f"IDS Alert: Anomalous telemetry rejected (prob: {max(fdi_prob, replay_prob)*100:.1f}%).")
-                            else:
-                                self.x_L_pred[i] = np.copy(leader_state_used)
-                        else:
-                            self.x_L_pred[i] = np.copy(leader_state_used)
-                    else:
-                        # Cryptographic signature failed (downlink FDI detected)
-                        # Reject packet, use dead reckoning
-                        self.x_L_pred[i] = (self.A_d @ self.x_L_pred[i].reshape(4, 1) + self.B_d @ u_L).flatten()
-                        leader_state_used = np.copy(self.x_L_pred[i])
-                else:
-                    # Unshielded: accept whatever is downloaded
-                    leader_state_used = np.array(leader_packet_down["state"]) if "state" in leader_packet_down else np.zeros(4)
-                    self.x_L_pred[i] = np.copy(leader_state_used)
-                    
             # Compute Control Input u(t)
             u_cmd = self.controller.compute_control(leader_state_used, x_est, u_L)
             self.u_prev[i] = u_cmd

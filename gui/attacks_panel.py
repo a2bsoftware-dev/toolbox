@@ -40,7 +40,7 @@ class AttacksPanel(ctk.CTkScrollableFrame):
         
         fdi_offset_frame = ctk.CTkFrame(self, fg_color="transparent")
         fdi_offset_frame.pack(fill="x", padx=15, pady=2)
-        ctk.CTkLabel(fdi_offset_frame, text="Offset (x,y):", font=lbl_font, width=70, anchor="w").pack(side="left")
+        ctk.CTkLabel(fdi_offset_frame, text="Offset (px,vx,py,vy):", font=lbl_font, width=110, anchor="w").pack(side="left")
         self.fdi_offset = ctk.CTkEntry(fdi_offset_frame, width=120, height=20, fg_color="#1e293b")
         self.fdi_offset.pack(side="left")
         
@@ -73,7 +73,13 @@ class AttacksPanel(ctk.CTkScrollableFrame):
         ctk.CTkLabel(delay_frame, text=" to ", font=lbl_font).pack(side="left")
         self.delay_end = ctk.CTkEntry(delay_frame, width=50, height=20, fg_color="#1e293b")
         self.delay_end.pack(side="left")
-        
+
+        delay_steps_frame = ctk.CTkFrame(self, fg_color="transparent")
+        delay_steps_frame.pack(fill="x", padx=15, pady=2)
+        ctk.CTkLabel(delay_steps_frame, text="Buffer Depth (steps):", font=lbl_font, width=110, anchor="w").pack(side="left")
+        self.delay_steps = ctk.CTkEntry(delay_steps_frame, width=50, height=20, fg_color="#1e293b")
+        self.delay_steps.pack(side="left")
+
         # Replay
         self.replay_var = tk.BooleanVar(value=False)
         self.replay_cb = ctk.CTkCheckBox(self, text="Packet Replay Attack", font=lbl_font, variable=self.replay_var,
@@ -88,7 +94,13 @@ class AttacksPanel(ctk.CTkScrollableFrame):
         ctk.CTkLabel(replay_frame, text=" to ", font=lbl_font).pack(side="left")
         self.replay_end = ctk.CTkEntry(replay_frame, width=50, height=20, fg_color="#1e293b")
         self.replay_end.pack(side="left")
-        
+
+        replay_window_frame = ctk.CTkFrame(self, fg_color="transparent")
+        replay_window_frame.pack(fill="x", padx=15, pady=2)
+        ctk.CTkLabel(replay_window_frame, text="Cache Window (steps):", font=lbl_font, width=110, anchor="w").pack(side="left")
+        self.replay_window = ctk.CTkEntry(replay_window_frame, width=50, height=20, fg_color="#1e293b")
+        self.replay_window.pack(side="left")
+
         # 2. Section: Defense Shields
         ctk.CTkLabel(self, text="🛡️ Cyber Security Shields", font=title_font, text_color="#10b981").pack(anchor="w", pady=(15, 2))
         
@@ -112,7 +124,13 @@ class AttacksPanel(ctk.CTkScrollableFrame):
         self.anomaly_cb = ctk.CTkCheckBox(self, text="Anomaly Detection (IDS)", font=lbl_font, variable=self.anomaly_var,
                                            fg_color="#10b981", hover_color="#059669")
         self.anomaly_cb.pack(anchor="w", pady=2)
-        
+
+        anomaly_frame = ctk.CTkFrame(self, fg_color="transparent")
+        anomaly_frame.pack(fill="x", padx=15, pady=2)
+        ctk.CTkLabel(anomaly_frame, text="Detection Threshold:", font=lbl_font, width=120, anchor="w").pack(side="left")
+        self.anomaly_threshold = ctk.CTkEntry(anomaly_frame, width=60, height=20, fg_color="#1e293b")
+        self.anomaly_threshold.pack(side="left")
+
         self.trust_var = tk.BooleanVar(value=True)
         self.trust_cb = ctk.CTkCheckBox(self, text="Reputation Trust Filter", font=lbl_font, variable=self.trust_var,
                                          fg_color="#10b981", hover_color="#059669")
@@ -147,13 +165,17 @@ class AttacksPanel(ctk.CTkScrollableFrame):
         self.delay_start.insert(0, str(att.get("delay", {}).get("start_time", 50.0)))
         self.delay_end.delete(0, "end")
         self.delay_end.insert(0, str(att.get("delay", {}).get("end_time", 60.0)))
-        
+        self.delay_steps.delete(0, "end")
+        self.delay_steps.insert(0, str(att.get("delay", {}).get("steps", 5)))
+
         self.replay_var.set(att.get("enable_replay", False))
         self.replay_start.delete(0, "end")
         self.replay_start.insert(0, str(att.get("replay", {}).get("start_time", 60.0)))
         self.replay_end.delete(0, "end")
         self.replay_end.insert(0, str(att.get("replay", {}).get("end_time", 70.0)))
-        
+        self.replay_window.delete(0, "end")
+        self.replay_window.insert(0, str(att.get("replay", {}).get("window_size", 40)))
+
         # Load defenses
         sec = config["security"]
         self.hmac_var.set(sec.get("enable_hmac", True))
@@ -161,6 +183,8 @@ class AttacksPanel(ctk.CTkScrollableFrame):
         self.dp_epsilon.delete(0, "end")
         self.dp_epsilon.insert(0, str(sec.get("dp_epsilon", 1.5)))
         self.anomaly_var.set(sec.get("enable_anomaly", True))
+        self.anomaly_threshold.delete(0, "end")
+        self.anomaly_threshold.insert(0, str(sec.get("anomaly_threshold", 5.0)))
         self.trust_var.set(sec.get("enable_trust", True))
         
     def on_apply_clicked(self):
@@ -184,15 +208,18 @@ class AttacksPanel(ctk.CTkScrollableFrame):
             self.config["attacks"]["enable_delay"] = bool(self.delay_cb.get())
             self.config["attacks"]["delay"]["start_time"] = float(self.delay_start.get())
             self.config["attacks"]["delay"]["end_time"] = float(self.delay_end.get())
-            
+            self.config["attacks"]["delay"]["steps"] = int(self.delay_steps.get())
+
             self.config["attacks"]["enable_replay"] = bool(self.replay_cb.get())
             self.config["attacks"]["replay"]["start_time"] = float(self.replay_start.get())
             self.config["attacks"]["replay"]["end_time"] = float(self.replay_end.get())
-            
+            self.config["attacks"]["replay"]["window_size"] = int(self.replay_window.get())
+
             self.config["security"]["enable_hmac"] = bool(self.hmac_cb.get())
             self.config["security"]["enable_dp"] = bool(self.dp_cb.get())
             self.config["security"]["dp_epsilon"] = float(self.dp_epsilon.get())
             self.config["security"]["enable_anomaly"] = bool(self.anomaly_cb.get())
+            self.config["security"]["anomaly_threshold"] = float(self.anomaly_threshold.get())
             self.config["security"]["enable_trust"] = bool(self.trust_cb.get())
             
             # Fire update notification callback

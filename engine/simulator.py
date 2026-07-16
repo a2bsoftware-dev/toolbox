@@ -211,6 +211,24 @@ class NCSSimulator:
             self.radius * self.omega * np.cos(self.omega * t)
         ])
 
+    def get_leader_dead_reckoning_input(self, t, x_pred):
+        """
+        Control input used ONLY to propagate x_L_pred forward during a total telemetry
+        blackout (DoS). Deliberately excludes get_leader_input's PID correction terms, which
+        are computed from the *real* leader's actual current deviation from ideal - privileged
+        information a follower receiving nothing at all should not have. Sharing that
+        correction (e.g. via a single u_L used for both the real leader and the dead-reckoning
+        estimate) would leak it through anyway, keeping the "blacked-out" estimate suspiciously
+        perfect regardless of outage length and making DoS a no-op. This uses only the public
+        feedforward formula plus self-referencing damping cancellation (against x_pred's own
+        velocity, not the real leader's), so the estimate degrades exactly as a real receiver
+        with no signal would: bounded by the actual dynamics, but blind to any of the leader's
+        own live corrections.
+        """
+        ux = -self.radius * (self.omega**2) * np.cos(self.omega * t) - self.damping * x_pred[1]
+        uy = -self.radius * (self.omega**2) * np.sin(self.omega * t) - self.damping * x_pred[3]
+        return np.array([ux, uy]).reshape(2, 1)
+
     def get_leader_input(self, t):
         """
         Feedforward centripetal acceleration (+ drag cancellation) keeps the leader moving
@@ -354,11 +372,18 @@ class NCSSimulator:
         if leader_packet_down is not None:
             leader_packet_down = self.attack_simulator.apply_replay(0, leader_packet_down, replay_active)
 
-        # ZOH prediction fallback on DoS
+        # ZOH prediction fallback on DoS: total signal blackout, nothing was received at all, so
+        # the only honest estimate is to extrapolate forward from the last trusted state using
+        # the known dynamics (zero-order hold dead reckoning). This is what actually makes DoS
+        # bite - snapping to the ideal reference here (as a still-tempting "safe" fallback) would
+        # silently hand followers perfect leader knowledge for free during a total outage,
+        # making the attack a no-op. Falling back to the ideal reference is reserved for the
+        # "a packet arrived but was rejected as tampered" cases below, where it prevents the
+        # rejection loop from permanently diverging (see get_leader_reference's docstring).
         if dos_active or leader_packet_down is None:
             self.packets_lost += 1
-            # Dead reckoning prediction: fall back to the known ideal reference trajectory
-            self.x_L_pred = self.get_leader_reference(self.t)
+            u_L_dr = self.get_leader_dead_reckoning_input(self.t, self.x_L_pred)
+            self.x_L_pred = (self.A_d @ self.x_L_pred.reshape(4, 1) + self.B_d @ u_L_dr).flatten()
             leader_state_used = np.copy(self.x_L_pred)
         else:
             # Defense validation

@@ -24,10 +24,19 @@ class LivePlotsPanel(ctk.CTkFrame):
             )
             self.export_btn.pack(side="bottom", fill="x", padx=5, pady=(2, 5))
 
-        # Create Tab View
+        # Create Tab View. update_active_plot() only redraws whichever tab is active *right
+        # now* (a deliberate perf optimization - no point re-rendering 6 matplotlib figures
+        # every timestep when only one is visible), so a tab that was never selected during
+        # a step stays on its blank initial axes even after a full run completes. Binding the
+        # tab switch itself to a redraw (using the last frame's data, cached below) means every
+        # tab shows correct, current data the moment it's clicked, not just whichever tab
+        # happened to be active while the simulation was actually stepping.
+        self._last_history = None
+        self._last_config = None
+        self._last_eigenvalues = None
         self.tabview = ctk.CTkTabview(self, segmented_button_selected_color="#06b6d4",
                                       segmented_button_selected_hover_color="#0891b2",
-                                      text_color="#f3f4f6")
+                                      text_color="#f3f4f6", command=self._on_tab_changed)
         self.tabview.pack(fill="both", expand=True, padx=5, pady=5)
         
         self.tabs = ["Trajectories", "Consensus Error", "Control Effort", "Observer Error", "Lyapunov Decays", "Pole s-Plane"]
@@ -119,6 +128,12 @@ class LivePlotsPanel(ctk.CTkFrame):
         """
         Redraws ONLY the currently selected tab's canvas to conserve CPU cycles.
         """
+        # Cache the latest frame so _on_tab_changed can redraw whichever tab the user clicks
+        # over to next, even long after the run that produced this data has stopped.
+        self._last_history = history
+        self._last_config = config
+        self._last_eigenvalues = eigenvalues
+
         active_tab = self.tabview.get()
         if not history["time"] and active_tab != "Pole s-Plane":
             return
@@ -241,7 +256,16 @@ class LivePlotsPanel(ctk.CTkFrame):
             
         fig.tight_layout()
         canvas.draw()
-        
+
+    def _on_tab_changed(self, *_args):
+        """
+        Fired by the CTkTabview whenever the user switches tabs. Redraws the newly-selected
+        tab with the most recent data on file, so it never shows stale/blank axes just because
+        it wasn't the active tab during the last step() call.
+        """
+        if self._last_history is not None:
+            self.update_active_plot(self._last_history, self._last_config, self._last_eigenvalues)
+
     def shade_attack_windows(self, ax, attack_windows):
         """
         Shades every currently-enabled attack's active time interval on the axes.

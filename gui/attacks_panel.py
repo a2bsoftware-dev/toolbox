@@ -195,24 +195,45 @@ class AttacksPanel(ctk.CTkScrollableFrame):
             if len(offset) != 4:
                 raise ValueError("FDI offset must contain exactly 4 values.")
                 
+            # Parse all four windows before writing anything to config, so a bad value in one
+            # attack can't leave the others partially applied, and so a start==end "window"
+            # (e.g. DoS "10.0 to 10.0") is caught here instead of silently never triggering -
+            # that exact zero-width mistake was reported as "DoS attack not working."
+            fdi_start, fdi_end = float(self.fdi_start.get()), float(self.fdi_end.get())
+            dos_start, dos_end = float(self.dos_start.get()), float(self.dos_end.get())
+            delay_start, delay_end = float(self.delay_start.get()), float(self.delay_end.get())
+            replay_start, replay_end = float(self.replay_start.get()), float(self.replay_end.get())
+
+            for label, start, end in [
+                ("False Data Injection", fdi_start, fdi_end),
+                ("Denial of Service", dos_start, dos_end),
+                ("Network Delay", delay_start, delay_end),
+                ("Packet Replay", replay_start, replay_end),
+            ]:
+                if end <= start:
+                    raise ValueError(
+                        f"{label} end time ({end}s) must be greater than its start time ({start}s) - "
+                        f"an equal or reversed window never actually activates the attack."
+                    )
+
             # Update config dict
             self.config["attacks"]["enable_fdi"] = bool(self.fdi_cb.get())
-            self.config["attacks"]["fdi"]["start_time"] = float(self.fdi_start.get())
-            self.config["attacks"]["fdi"]["end_time"] = float(self.fdi_end.get())
+            self.config["attacks"]["fdi"]["start_time"] = fdi_start
+            self.config["attacks"]["fdi"]["end_time"] = fdi_end
             self.config["attacks"]["fdi"]["offset"] = offset
-            
+
             self.config["attacks"]["enable_dos"] = bool(self.dos_cb.get())
-            self.config["attacks"]["dos"]["start_time"] = float(self.dos_start.get())
-            self.config["attacks"]["dos"]["end_time"] = float(self.dos_end.get())
-            
+            self.config["attacks"]["dos"]["start_time"] = dos_start
+            self.config["attacks"]["dos"]["end_time"] = dos_end
+
             self.config["attacks"]["enable_delay"] = bool(self.delay_cb.get())
-            self.config["attacks"]["delay"]["start_time"] = float(self.delay_start.get())
-            self.config["attacks"]["delay"]["end_time"] = float(self.delay_end.get())
+            self.config["attacks"]["delay"]["start_time"] = delay_start
+            self.config["attacks"]["delay"]["end_time"] = delay_end
             self.config["attacks"]["delay"]["steps"] = int(self.delay_steps.get())
 
             self.config["attacks"]["enable_replay"] = bool(self.replay_cb.get())
-            self.config["attacks"]["replay"]["start_time"] = float(self.replay_start.get())
-            self.config["attacks"]["replay"]["end_time"] = float(self.replay_end.get())
+            self.config["attacks"]["replay"]["start_time"] = replay_start
+            self.config["attacks"]["replay"]["end_time"] = replay_end
             self.config["attacks"]["replay"]["window_size"] = int(self.replay_window.get())
 
             self.config["security"]["enable_hmac"] = bool(self.hmac_cb.get())

@@ -4,6 +4,8 @@ from tkinter import messagebox
 from gui.matrix_editor import MatrixEditor
 from engine.controllers import LQRController, PolePlacementController
 from engine.model import continuous_matrices, euler_discrete_matrices
+from utils.config import (MIN_N_FOLLOWERS, MAX_N_FOLLOWERS, MIN_DRONE_DISTANCE_M,
+                          MAX_DRONE_DISTANCE_M, generate_initial_positions)
 
 class ControllerPanel(ctk.CTkFrame):
     """
@@ -23,6 +25,26 @@ class ControllerPanel(ctk.CTkFrame):
         title_font = ctk.CTkFont(family="Helvetica", size=12, weight="bold")
         lbl_font = ctk.CTkFont(family="Helvetica", size=11)
         
+        # 0. Swarm Size Selection
+        ctk.CTkLabel(self, text="🚁 Swarm Configuration", font=title_font, text_color="#06b6d4").pack(anchor="w", pady=(5, 2))
+
+        swarm_frame = ctk.CTkFrame(self, fg_color="transparent")
+        swarm_frame.pack(fill="x", pady=2)
+        ctk.CTkLabel(swarm_frame, text=f"Number of Drones ({MIN_N_FOLLOWERS}-{MAX_N_FOLLOWERS}):",
+                     font=lbl_font, width=150, anchor="w").pack(side="left")
+        self.n_followers_entry = ctk.CTkEntry(swarm_frame, width=50, height=22, fg_color="#1e293b", text_color="#ffffff")
+        self.n_followers_entry.pack(side="left")
+
+        dist_frame = ctk.CTkFrame(self, fg_color="transparent")
+        dist_frame.pack(fill="x", pady=2)
+        ctk.CTkLabel(dist_frame, text=f"Distance Between Drones (m) ({MIN_DRONE_DISTANCE_M:.0f}-{MAX_DRONE_DISTANCE_M:.0f}):",
+                     font=lbl_font, width=150, anchor="w").pack(side="left")
+        self.drone_distance_entry = ctk.CTkEntry(dist_frame, width=50, height=22, fg_color="#1e293b", text_color="#ffffff")
+        self.drone_distance_entry.pack(side="left")
+
+        ctk.CTkButton(self, text="Apply Swarm Settings", height=22, fg_color="#1e293b", hover_color="#334155",
+                      command=self.on_swarm_settings_changed).pack(fill="x", pady=(2, 0))
+
         # 1. Domain & Type Selection
         ctk.CTkLabel(self, text="⚡ System Modeling Domain", font=title_font, text_color="#06b6d4").pack(anchor="w", pady=(5, 2))
         
@@ -102,7 +124,13 @@ class ControllerPanel(ctk.CTkFrame):
         
     def load_configuration(self, config: dict):
         self.config = config
-        
+
+        # Load swarm size and formation spacing
+        self.n_followers_entry.delete(0, "end")
+        self.n_followers_entry.insert(0, str(config["simulation"]["n_followers"]))
+        self.drone_distance_entry.delete(0, "end")
+        self.drone_distance_entry.insert(0, str(config["simulation"].get("drone_distance_m", 5.0)))
+
         # Load modeling domain
         dom = config["system"].get("model_domain", "continuous").capitalize()
         self.domain_select.set(dom)
@@ -136,6 +164,34 @@ class ControllerPanel(ctk.CTkFrame):
         # Update output logs
         self.update_stability_logs()
         
+    def on_swarm_settings_changed(self):
+        current_n = self.config["simulation"]["n_followers"]
+        current_dist = self.config["simulation"].get("drone_distance_m", 5.0)
+        try:
+            n = int(self.n_followers_entry.get())
+            if n < MIN_N_FOLLOWERS or n > MAX_N_FOLLOWERS:
+                raise ValueError(f"Number of drones must be between {MIN_N_FOLLOWERS} and {MAX_N_FOLLOWERS}.")
+            distance = float(self.drone_distance_entry.get())
+            if distance < MIN_DRONE_DISTANCE_M or distance > MAX_DRONE_DISTANCE_M:
+                raise ValueError(f"Distance between drones must be between "
+                                  f"{MIN_DRONE_DISTANCE_M:.0f}m and {MAX_DRONE_DISTANCE_M:.0f}m.")
+        except ValueError as e:
+            messagebox.showerror("Invalid Swarm Settings", str(e) if str(e) else "Please enter valid numbers.")
+            self.n_followers_entry.delete(0, "end")
+            self.n_followers_entry.insert(0, str(current_n))
+            self.drone_distance_entry.delete(0, "end")
+            self.drone_distance_entry.insert(0, str(current_dist))
+            return
+
+        if n == current_n and distance == current_dist:
+            return
+
+        self.config["simulation"]["n_followers"] = n
+        self.config["simulation"]["drone_distance_m"] = distance
+        if n != current_n:
+            self.config["simulation"]["initial_positions"] = generate_initial_positions(n)
+        self.on_update(self.config)
+
     def on_domain_changed(self, val: str):
         self.config["system"]["model_domain"] = val.lower()
         self.on_matrix_type_changed(self.matrix_selector.get())

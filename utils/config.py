@@ -2,8 +2,15 @@ import os
 import json
 import logging
 import copy
+import math
 
 logger = logging.getLogger("NCS.Config")
+
+MIN_N_FOLLOWERS = 1
+MAX_N_FOLLOWERS = 50
+
+MIN_DRONE_DISTANCE_M = 3.0
+MAX_DRONE_DISTANCE_M = 30.0
 
 # Default template configuration dictionary
 DEFAULT_CONFIG = {
@@ -46,7 +53,8 @@ DEFAULT_CONFIG = {
             [0.0,  0.0,  6.0, 0.0]
         ],
         "leader_orbit_radius": 10.0,
-        "leader_orbit_omega": 0.15
+        "leader_orbit_omega": 0.15,
+        "drone_distance_m": 5.0
     },
     "controller": {
         "type": "LQR",
@@ -87,6 +95,19 @@ DEFAULT_CONFIG = {
         }
     }
 }
+
+def generate_initial_positions(n_followers: int, spread: float = 6.0) -> list:
+    """
+    Evenly distributes n_followers around a circle of radius `spread` so newly
+    added drones start apart from each other instead of stacked at the origin.
+    """
+    positions = []
+    for i in range(n_followers):
+        angle = 2 * math.pi * i / n_followers
+        x = round(spread * math.cos(angle), 3)
+        y = round(spread * math.sin(angle), 3)
+        positions.append([x, 0.0, y, 0.0])
+    return positions
 
 def merge_configs(default: dict, user: dict) -> dict:
     merged = copy.deepcopy(default)

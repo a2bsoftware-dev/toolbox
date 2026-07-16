@@ -38,7 +38,8 @@
       [0.0,  0.0,  6.0, 0.0]
     ],
     "leader_orbit_radius": 10.0,
-    "leader_orbit_omega": 0.15
+    "leader_orbit_omega": 0.15,
+    "drone_distance_m": 5.0
   },
   "controller": {
     "type": "LQR",

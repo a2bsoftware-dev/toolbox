@@ -70,6 +70,7 @@ class NCSSimulator:
         sim_cfg = self.config["simulation"]
         self.n_followers = sim_cfg["n_followers"]
         self.initial_positions = sim_cfg["initial_positions"]
+        self.drone_distance_m = sim_cfg.get("drone_distance_m", 5.0)
         self.omega = sim_cfg["leader_orbit_omega"]
         self.radius = sim_cfg["leader_orbit_radius"]
         
@@ -260,7 +261,24 @@ class NCSSimulator:
         uy = (-self.radius * (self.omega**2) * np.sin(self.omega * t) - self.damping * self.x_L_state[3, 0]
               + kp * ey + kd * (vy_ref - self.x_L_state[3, 0]) + ki * self.x_L_integral_error[1])
         return np.array([ux, uy]).reshape(2, 1)
-        
+
+    def _formation_target(self, i, leader_state):
+        """
+        Reference state for follower i: the leader's state shifted back along its current
+        direction of travel by (i+1) * drone_distance_m, so followers queue up single-file
+        behind the leader, each drone_distance_m behind the one ahead of it, rather than all
+        converging onto the leader's exact position.
+        """
+        px, vx, py, vy = leader_state
+        speed = np.hypot(vx, vy)
+        if speed > 1e-6:
+            hx, hy = vx / speed, vy / speed
+        else:
+            hx, hy = 1.0, 0.0
+
+        offset = (i + 1) * self.drone_distance_m
+        return np.array([px - hx * offset, vx, py - hy * offset, vy])
+
     def step(self) -> dict:
         """
         Advances the simulation by one timestep dt.
@@ -432,8 +450,10 @@ class NCSSimulator:
             kf = self.filters[i]
             x_est = kf.get_state()
 
-            # Compute Control Input u(t)
-            u_cmd = self.controller.compute_control(leader_state_used, x_est, u_L)
+            # Compute Control Input u(t) against this follower's formation slot (queued behind
+            # the leader along its direction of travel, spaced by drone_distance_m per slot).
+            formation_target = self._formation_target(i, leader_state_used)
+            u_cmd = self.controller.compute_control(formation_target, x_est, u_L)
             self.u_prev[i] = u_cmd
             
             # Log Histories
